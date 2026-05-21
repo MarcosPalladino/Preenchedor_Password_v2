@@ -1,8 +1,5 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace TPPreenchedor.Data.Models
 {
@@ -10,8 +7,11 @@ namespace TPPreenchedor.Data.Models
     {
         public int Id { get; set; }
         public string Login { get; set; }
-        public string Senha { get; set; }
+        public string PasswordHash { get; set; }
+        public string NomeExibicao { get; set; }
+        public bool Ativo { get; set; }
+        public DateTime DataCriacao { get; set; }
+        public DateTime? UltimoAcesso { get; set; }
+        public virtual ICollection<ItemPreenchimento> Itens { get; set; } = new List<ItemPreenchimento>();
     }
-
-
 }

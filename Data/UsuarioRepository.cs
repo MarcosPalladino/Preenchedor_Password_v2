@@ -1,55 +1,92 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using TPPreenchedor.Data.Models;
 
 namespace TPPreenchedor.Data
 {
     public class UsuarioRepository
     {
-        private readonly ApplicationDbContext _context;
-
-        public UsuarioRepository()
+        public List<Usuario> ObterTodos()
         {
-            _context = new ApplicationDbContext();
-        }
-
-        // Adiciona um novo usuário ao banco de dados
-        public void AdicionarUsuario(Usuario usuario)
-        {
-            _context.Usuarios.Add(usuario);
-            _context.SaveChanges();
-        }
-
-        // Obtém todos os usuários
-        public List<Usuario> ObterTodosUsuarios()
-        {
-            return _context.Usuarios.ToList();
-        }
-
-        // Obtém um usuário por ID
-        public Usuario ObterUsuarioPorId(int id)
-        {
-            return _context.Usuarios.FirstOrDefault(u => u.Id == id);
-        }
-
-        // Atualiza um usuário existente
-        public void AtualizarUsuario(Usuario usuario)
-        {
-            _context.Usuarios.Update(usuario);
-            _context.SaveChanges();
-        }
-
-        // Remove um usuário
-        public void RemoverUsuario(int id)
-        {
-            var usuario = _context.Usuarios.FirstOrDefault(u => u.Id == id);
-            if (usuario != null)
+            using (var context = new ApplicationDbContext())
             {
-                _context.Usuarios.Remove(usuario);
-                _context.SaveChanges();
+                return context.Usuarios
+                    .OrderBy(x => x.Login)
+                    .ToList();
+            }
+        }
+
+        public Usuario ObterPorId(int id)
+        {
+            using (var context = new ApplicationDbContext())
+            {
+                return context.Usuarios.FirstOrDefault(x => x.Id == id);
+            }
+        }
+
+        public Usuario ObterPorLogin(string login)
+        {
+            using (var context = new ApplicationDbContext())
+            {
+                return context.Usuarios.FirstOrDefault(x => x.Login == login && x.Ativo);
+            }
+        }
+
+        public Usuario ObterPorLoginSemFiltro(string login)
+        {
+            using (var context = new ApplicationDbContext())
+            {
+                return context.Usuarios.FirstOrDefault(x => x.Login == login);
+            }
+        }
+
+        public Usuario Adicionar(Usuario usuario)
+        {
+            using (var context = new ApplicationDbContext())
+            {
+                context.Usuarios.Add(usuario);
+                context.SaveChanges();
+                return usuario;
+            }
+        }
+
+        public void Atualizar(Usuario usuario)
+        {
+            using (var context = new ApplicationDbContext())
+            {
+                context.Usuarios.Update(usuario);
+                context.SaveChanges();
+            }
+        }
+
+        public void Remover(int id)
+        {
+            using (var context = new ApplicationDbContext())
+            {
+                var usuario = context.Usuarios.FirstOrDefault(x => x.Id == id);
+                if (usuario == null)
+                {
+                    return;
+                }
+
+                context.Usuarios.Remove(usuario);
+                context.SaveChanges();
+            }
+        }
+
+        public void AtualizarUltimoAcesso(int usuarioId)
+        {
+            using (var context = new ApplicationDbContext())
+            {
+                var usuario = context.Usuarios.FirstOrDefault(x => x.Id == usuarioId);
+                if (usuario == null)
+                {
+                    return;
+                }
+
+                usuario.UltimoAcesso = DateTime.UtcNow;
+                context.SaveChanges();
             }
         }
     }
