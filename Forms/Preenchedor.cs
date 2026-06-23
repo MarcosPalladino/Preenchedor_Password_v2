@@ -59,14 +59,29 @@ namespace TPPreenchedor.Forms
         }
 
         private const int INPUT_KEYBOARD = 1;
+        private const int KEYEVENTF_EXTENDEDKEY = 1;
         private const int KEYEVENTF_UNICODE = 4;
         private const int KEYEVENTF_KEYUP = 2;
+        private const int KEYEVENTF_SCANCODE = 8;
+        private const uint MAPVK_VK_TO_VSC_EX = 4;
+        private const int VK_SHIFT = 0x10;
+        private const int VK_CONTROL = 0x11;
+        private const int VK_MENU = 0x12;
+        private const int VK_CAPITAL = 0x14;
+
+        private enum ModoEnvio
+        {
+            Automatico = 0,
+            TecladoFisico = 1,
+            UnicodeLegado = 2
+        }
 
         private readonly Usuario _usuario;
         private readonly ItemPreenchimentoRepository _itemRepository;
         private readonly UsuarioService _usuarioService;
         private TrackBar _trackBar;
         private Label _lblTempo;
+        private ComboBox _cmbModoEnvio;
         private DataGridView _gridCredenciais;
         private BindingList<ItemPreenchimento> _credenciais;
         private FlowLayoutPanel _painelTextos;
@@ -89,6 +104,24 @@ namespace TPPreenchedor.Forms
         [DllImport("user32.dll", SetLastError = true)]
         private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr lpdwProcessId);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetKeyboardLayout(uint idThread);
+
+        [DllImport("user32.dll", EntryPoint = "VkKeyScanExW", CharSet = CharSet.Unicode)]
+        private static extern short VkKeyScanEx(char ch, IntPtr dwhkl);
+
+        [DllImport("user32.dll")]
+        private static extern uint MapVirtualKeyEx(uint uCode, uint uMapType, IntPtr dwhkl);
+
+        [DllImport("user32.dll")]
+        private static extern short GetKeyState(int nVirtKey);
+
         private void InitializeComponent()
         {
             BuildLayout();
@@ -105,7 +138,7 @@ namespace TPPreenchedor.Forms
             var topo = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = 92,
+                Height = 116,
                 BackColor = Color.White
             };
 
@@ -142,10 +175,31 @@ namespace TPPreenchedor.Forms
                 Maximum = 20,
                 Value = 3,
                 TickStyle = TickStyle.None,
-                Width = 260,
+                Width = 170,
                 Location = new Point(610, 42)
             };
             _trackBar.ValueChanged += TrackBar_ValueChanged;
+
+            var lblModoEnvio = new Label
+            {
+                Text = "Modo",
+                AutoSize = true,
+                Location = new Point(800, 18),
+                Font = new Font("Segoe UI", 9F),
+                ForeColor = Color.DimGray
+            };
+
+            _cmbModoEnvio = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Width = 150,
+                Location = new Point(800, 42),
+                Font = new Font("Segoe UI", 9F)
+            };
+            _cmbModoEnvio.Items.Add("Automatico");
+            _cmbModoEnvio.Items.Add("Teclado fisico");
+            _cmbModoEnvio.Items.Add("Unicode legado");
+            _cmbModoEnvio.SelectedIndex = 0;
 
             var btnUsuarios = new Button
             {
@@ -175,6 +229,8 @@ namespace TPPreenchedor.Forms
             topo.Controls.Add(lblUsuario);
             topo.Controls.Add(_lblTempo);
             topo.Controls.Add(_trackBar);
+            topo.Controls.Add(lblModoEnvio);
+            topo.Controls.Add(_cmbModoEnvio);
             topo.Controls.Add(btnTrocarSenha);
             topo.Controls.Add(btnUsuarios);
 
@@ -677,10 +733,49 @@ namespace TPPreenchedor.Forms
             try
             {
                 await Task.Delay(_trackBar.Value * 1000);
+                var modoEnvio = ObterModoEnvioSelecionado();
 
-                foreach (var caractere in valor)
+                if (modoEnvio == ModoEnvio.UnicodeLegado)
                 {
-                    SendUnicodeChar(caractere);
+                    foreach (var caractere in valor)
+                    {
+                        SendUnicodeChar(caractere);
+                        await Task.Delay(5);
+                    }
+
+                    return;
+                }
+
+                var keyboardLayout = GetFocusedWindowKeyboardLayout();
+                var restoreCapsLock = IsCapsLockOn();
+                var capsLockTurnedOff = false;
+                if (restoreCapsLock)
+                {
+                    ToggleVirtualKey(VK_CAPITAL, keyboardLayout);
+                    capsLockTurnedOff = true;
+                }
+
+                try
+                {
+                    ReleaseModifierKeys(keyboardLayout);
+
+                    foreach (var caractere in valor)
+                    {
+                        SendExactChar(
+                            caractere,
+                            keyboardLayout,
+                            modoEnvio == ModoEnvio.Automatico);
+                        await Task.Delay(5);
+                    }
+                }
+                finally
+                {
+                    ReleaseModifierKeys(keyboardLayout);
+
+                    if (capsLockTurnedOff && !IsCapsLockOn())
+                    {
+                        ToggleVirtualKey(VK_CAPITAL, keyboardLayout);
+                    }
                 }
             }
             catch (Exception ex)
@@ -700,8 +795,145 @@ namespace TPPreenchedor.Forms
         private void ToggleControls(bool enabled)
         {
             _trackBar.Enabled = enabled;
+            _cmbModoEnvio.Enabled = enabled;
             _gridCredenciais.Enabled = enabled;
             _painelTextos.Enabled = enabled;
+        }
+
+        private ModoEnvio ObterModoEnvioSelecionado()
+        {
+            if (_cmbModoEnvio == null)
+            {
+                return ModoEnvio.Automatico;
+            }
+
+            if (_cmbModoEnvio.SelectedIndex == (int)ModoEnvio.TecladoFisico)
+            {
+                return ModoEnvio.TecladoFisico;
+            }
+
+            if (_cmbModoEnvio.SelectedIndex == (int)ModoEnvio.UnicodeLegado)
+            {
+                return ModoEnvio.UnicodeLegado;
+            }
+
+            return ModoEnvio.Automatico;
+        }
+
+        private IntPtr GetFocusedWindowKeyboardLayout()
+        {
+            var foregroundWindow = GetForegroundWindow();
+            if (foregroundWindow == IntPtr.Zero)
+            {
+                return GetKeyboardLayout(0);
+            }
+
+            var threadId = GetWindowThreadProcessId(foregroundWindow, IntPtr.Zero);
+            return GetKeyboardLayout(threadId);
+        }
+
+        private bool IsCapsLockOn()
+        {
+            return (GetKeyState(VK_CAPITAL) & 1) == 1;
+        }
+
+        private void SendExactChar(char c, IntPtr keyboardLayout, bool permitirFallbackUnicode)
+        {
+            var keyScan = VkKeyScanEx(c, keyboardLayout);
+            if (keyScan == -1)
+            {
+                if (!permitirFallbackUnicode)
+                {
+                    throw new Exception("Nao foi possivel mapear um caractere para o layout ativo.");
+                }
+
+                SendUnicodeChar(c);
+                return;
+            }
+
+            var virtualKey = keyScan & 0xFF;
+            var shiftState = (keyScan >> 8) & 0xFF;
+            var requiresShift = (shiftState & 1) == 1;
+            var requiresControl = (shiftState & 2) == 2;
+            var requiresAlt = (shiftState & 4) == 4;
+
+            if (requiresControl)
+            {
+                SendVirtualKey(VK_CONTROL, false, keyboardLayout);
+            }
+
+            if (requiresAlt)
+            {
+                SendVirtualKey(VK_MENU, false, keyboardLayout);
+            }
+
+            if (requiresShift)
+            {
+                SendVirtualKey(VK_SHIFT, false, keyboardLayout);
+            }
+
+            SendVirtualKey(virtualKey, false, keyboardLayout);
+            SendVirtualKey(virtualKey, true, keyboardLayout);
+
+            if (requiresShift)
+            {
+                SendVirtualKey(VK_SHIFT, true, keyboardLayout);
+            }
+
+            if (requiresAlt)
+            {
+                SendVirtualKey(VK_MENU, true, keyboardLayout);
+            }
+
+            if (requiresControl)
+            {
+                SendVirtualKey(VK_CONTROL, true, keyboardLayout);
+            }
+        }
+
+        private void ReleaseModifierKeys(IntPtr keyboardLayout)
+        {
+            SendVirtualKey(VK_SHIFT, true, keyboardLayout);
+            SendVirtualKey(VK_MENU, true, keyboardLayout);
+            SendVirtualKey(VK_CONTROL, true, keyboardLayout);
+        }
+
+        private void ToggleVirtualKey(int virtualKey, IntPtr keyboardLayout)
+        {
+            SendVirtualKey(virtualKey, false, keyboardLayout);
+            SendVirtualKey(virtualKey, true, keyboardLayout);
+        }
+
+        private void SendVirtualKey(int virtualKey, bool keyUp, IntPtr keyboardLayout)
+        {
+            var scanCode = MapVirtualKeyEx((uint)virtualKey, MAPVK_VK_TO_VSC_EX, keyboardLayout);
+            if (scanCode == 0)
+            {
+                throw new Exception("Nao foi possivel mapear uma tecla para o layout ativo.");
+            }
+
+            var input = new INPUT[1];
+            input[0].type = INPUT_KEYBOARD;
+            input[0].u.ki.wVk = 0;
+            input[0].u.ki.wScan = (short)(scanCode & 0xFF);
+            input[0].u.ki.dwFlags = KEYEVENTF_SCANCODE;
+            input[0].u.ki.time = 0;
+            input[0].u.ki.dwExtraInfo = IntPtr.Zero;
+
+            if ((scanCode & 0xFF00) != 0)
+            {
+                input[0].u.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
+            }
+
+            if (keyUp)
+            {
+                input[0].u.ki.dwFlags |= KEYEVENTF_KEYUP;
+            }
+
+            if (SendInput(1u, input, Marshal.SizeOf(input[0])) == 0)
+            {
+                throw new Exception("Erro ao enviar entrada de teclado.");
+            }
         }
 
         private void SendUnicodeChar(char c)
